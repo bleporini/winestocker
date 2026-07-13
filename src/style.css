@@ -340,7 +340,8 @@ input.ocr-target-active {
 }
 
 .stock-in-item-btn,
-.stock-out-item-btn {
+.stock-out-item-btn,
+.delete-depleted-item-btn {
   appearance: none;
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 7px;
@@ -360,8 +361,15 @@ input.ocr-target-active {
   background: rgba(128, 0, 32, 0.38);
 }
 
+.delete-depleted-item-btn {
+  border-color: rgba(231, 76, 60, 0.55);
+  background: rgba(231, 76, 60, 0.15);
+  color: #f3a69d;
+}
+
 .stock-in-item-btn:active,
-.stock-out-item-btn:active {
+.stock-out-item-btn:active,
+.delete-depleted-item-btn:active {
   background: rgba(255, 255, 255, 0.16);
   transform: scale(0.97);
 }

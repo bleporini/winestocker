@@ -825,6 +825,68 @@ const commitTransaction = async () => {
   }
 };
 
+/**
+ * Removes a depleted stock row while retaining the bottle cache and movement ledger.
+ */
+const deleteDepletedWine = async (stockId) => {
+  const { accessToken, spreadsheetId } = currentState.auth;
+  if (!accessToken || !spreadsheetId) return;
+
+  dispatch({ type: 'SET_LOADING', loading: true, message: 'Removing depleted wine...' });
+
+  try {
+    const [stockRes, metadataRes] = await Promise.all([
+      fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/stock_status!A:E`, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      }),
+      fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets.properties`, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      })
+    ]);
+
+    if (!stockRes.ok || !metadataRes.ok) throw new Error('Could not load the current inventory.');
+
+    const stockData = await stockRes.json();
+    const metadata = await metadataRes.json();
+    const rowIndex = (stockData.values || []).findIndex((row, index) => index > 0 && row[0] === stockId);
+    const quantity = rowIndex === -1 ? null : parseInt(stockData.values[rowIndex][3]) || 0;
+
+    if (rowIndex === -1) throw new Error('This wine no longer exists in the inventory.');
+    if (quantity !== 0) throw new Error('Only wines with zero quantity can be deleted.');
+
+    const stockSheet = metadata.sheets?.find(sheet => sheet.properties.title === 'stock_status');
+    if (!stockSheet) throw new Error('Could not find the stock_status sheet.');
+
+    const deleteRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        requests: [{
+          deleteDimension: {
+            range: {
+              sheetId: stockSheet.properties.sheetId,
+              dimension: 'ROWS',
+              startIndex: rowIndex,
+              endIndex: rowIndex + 1
+            }
+          }
+        }]
+      })
+    });
+
+    if (!deleteRes.ok) throw new Error('Could not delete the inventory row.');
+
+    dispatch({ type: 'SET_SUCCESS', message: 'Depleted wine removed from inventory.' });
+    await fetchSpreadsheetData();
+  } catch (err) {
+    console.error(err);
+    dispatch({ type: 'SET_ERROR', error: `Delete failed: ${err.message}` });
+  }
+};
+
 // --- 7. Pure Functional UI Renderers ---
 
 const renderHeader = (state) => {
@@ -945,7 +1007,9 @@ const renderActiveView = (state) => {
                     <button class="stock-in-item-btn" data-stock-id="${item.id}" type="button">Stock In</button>
                     ${(parseInt(item.quantity) || 0) > 0 ? `
                       <button class="stock-out-item-btn" data-stock-id="${item.id}" type="button">Stock Out</button>
-                    ` : ''}
+                    ` : `
+                      <button class="delete-depleted-item-btn" data-stock-id="${item.id}" type="button">Delete</button>
+                    `}
                   </div>
                 </div>
               </div>
@@ -1218,6 +1282,18 @@ const bindEventListeners = (state) => {
               quantity: 1
             }
           });
+        });
+      });
+
+      const deleteDepletedButtons = document.querySelectorAll('.delete-depleted-item-btn');
+      deleteDepletedButtons.forEach(btn => {
+        btn.addEventListener('click', () => {
+          const item = state.inventory.find(stockItem => stockItem.id === btn.dataset.stockId);
+          if (!item || (parseInt(item.quantity) || 0) !== 0) return;
+
+          if (window.confirm(`Delete ${item.wine_name || 'this wine'} from the inventory?`)) {
+            deleteDepletedWine(item.id);
+          }
         });
       });
       break;
