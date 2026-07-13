@@ -333,6 +333,13 @@ input.ocr-target-active {
   gap: 8px;
 }
 
+.inventory-item-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.stock-in-item-btn,
 .stock-out-item-btn {
   appearance: none;
   border: 1px solid rgba(255, 255, 255, 0.14);
@@ -348,6 +355,12 @@ input.ocr-target-active {
   cursor: pointer;
 }
 
+.stock-in-item-btn {
+  border-color: rgba(128, 0, 32, 0.7);
+  background: rgba(128, 0, 32, 0.38);
+}
+
+.stock-in-item-btn:active,
 .stock-out-item-btn:active {
   background: rgba(255, 255, 255, 0.16);
   transform: scale(0.97);

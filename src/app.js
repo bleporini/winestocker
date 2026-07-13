@@ -167,7 +167,7 @@ const stateReducer = (state, action) => {
       return Object.freeze({
         ...state,
         view: 'CONFIRM',
-        scanMode: 'OUT',
+        scanMode: action.scanMode,
         scannedBarcode: '',
         selectedStockId: action.item.id,
         formData: Object.freeze(action.formData)
@@ -941,9 +941,12 @@ const renderActiveView = (state) => {
                 </div>
                 <div class="inventory-actions">
                   <div class="wine-qty">${item.quantity}</div>
-                  ${(parseInt(item.quantity) || 0) > 0 ? `
-                    <button class="stock-out-item-btn" data-stock-id="${item.id}" type="button">Stock Out</button>
-                  ` : ''}
+                  <div class="inventory-item-buttons">
+                    <button class="stock-in-item-btn" data-stock-id="${item.id}" type="button">Stock In</button>
+                    ${(parseInt(item.quantity) || 0) > 0 ? `
+                      <button class="stock-out-item-btn" data-stock-id="${item.id}" type="button">Stock Out</button>
+                    ` : ''}
+                  </div>
                 </div>
               </div>
             `).join('') : `
@@ -956,7 +959,7 @@ const renderActiveView = (state) => {
           <div class="fab-container">
             <button id="dashboard-in-btn" class="btn btn-burgundy">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-              <span>Stock In</span>
+              <span>Scan New Wine</span>
             </button>
             <button id="dashboard-out-btn" class="btn btn-primary">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line></svg>
@@ -1197,8 +1200,8 @@ const bindEventListeners = (state) => {
         });
       }
 
-      const stockOutButtons = document.querySelectorAll('.stock-out-item-btn');
-      stockOutButtons.forEach(btn => {
+      const existingWineButtons = document.querySelectorAll('.stock-in-item-btn, .stock-out-item-btn');
+      existingWineButtons.forEach(btn => {
         btn.addEventListener('click', () => {
           const item = state.inventory.find(stockItem => stockItem.id === btn.dataset.stockId);
           if (!item) return;
@@ -1207,6 +1210,7 @@ const bindEventListeners = (state) => {
           dispatch({
             type: 'SELECT_EXISTING_WINE',
             item,
+            scanMode: btn.classList.contains('stock-in-item-btn') ? 'IN' : 'OUT',
             formData: {
               domain: cachedBottle?.domain || '',
               appellation: cachedBottle?.appellation || item.wine_name || '',
