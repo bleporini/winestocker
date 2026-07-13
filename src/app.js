@@ -7,6 +7,39 @@
 const GOOGLE_CLIENT_ID = '614000804759-jp0nilf67fvbpm6902uj0l9p3bndjfba.apps.googleusercontent.com';
 // Hardcoded Google Spreadsheet ID (replace with your actual Spreadsheet ID)
 const GOOGLE_SPREADSHEET_ID = '1ZnFStdDi8hayuwOJq0tVxTMQCMTkYP0E5VU5Ytprkzs';
+const AUTH_STORAGE_KEY = 'winestocker.google-auth';
+
+// Google access tokens are short-lived. Persisting the expiry lets us reuse a valid
+// token after a browser refresh without attempting to use a token that has expired.
+const saveStoredAuth = (token, expiresInSeconds) => {
+  try {
+    const expiresAt = Date.now() + (Number(expiresInSeconds) || 3600) * 1000;
+    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ token, expiresAt }));
+    return expiresAt;
+  } catch (err) {
+    console.warn('Could not save authentication in browser storage:', err);
+    return null;
+  }
+};
+
+const getStoredAuth = () => {
+  try {
+    const storedAuth = JSON.parse(localStorage.getItem(AUTH_STORAGE_KEY) || 'null');
+    if (storedAuth?.token && storedAuth.expiresAt > Date.now()) return storedAuth;
+    localStorage.removeItem(AUTH_STORAGE_KEY);
+  } catch (err) {
+    console.warn('Could not read stored authentication:', err);
+  }
+  return null;
+};
+
+const clearStoredAuth = () => {
+  try {
+    localStorage.removeItem(AUTH_STORAGE_KEY);
+  } catch (err) {
+    console.warn('Could not clear stored authentication:', err);
+  }
+};
 
 // --- 1. Global State Management ---
 
@@ -17,6 +50,7 @@ const GOOGLE_SPREADSHEET_ID = '1ZnFStdDi8hayuwOJq0tVxTMQCMTkYP0E5VU5Ytprkzs';
 const createInitialState = () => Object.freeze({
   auth: Object.freeze({
     accessToken: null,
+    expiresAt: null,
     clientId: GOOGLE_CLIENT_ID,
     spreadsheetId: GOOGLE_SPREADSHEET_ID
   }),
@@ -89,7 +123,8 @@ const stateReducer = (state, action) => {
         ...state,
         auth: Object.freeze({
           ...state.auth,
-          accessToken: action.token
+          accessToken: action.token,
+          expiresAt: action.expiresAt || null
         })
       });
       
@@ -185,6 +220,7 @@ const stateReducer = (state, action) => {
         ...state,
         auth: Object.freeze({
           accessToken: null,
+          expiresAt: null,
           clientId: GOOGLE_CLIENT_ID,
           spreadsheetId: GOOGLE_SPREADSHEET_ID
         }),
@@ -236,7 +272,8 @@ const initGoogleAuth = (state) => {
     scope: 'https://www.googleapis.com/auth/spreadsheets',
     callback: (tokenResponse) => {
       if (tokenResponse && tokenResponse.access_token) {
-        dispatch({ type: 'SET_ACCESS_TOKEN', token: tokenResponse.access_token });
+        const expiresAt = saveStoredAuth(tokenResponse.access_token, tokenResponse.expires_in);
+        dispatch({ type: 'SET_ACCESS_TOKEN', token: tokenResponse.access_token, expiresAt });
         fetchSpreadsheetData();
       } else {
         dispatch({ type: 'SET_ERROR', error: 'Authentication failed. Please check credentials.' });
@@ -275,6 +312,12 @@ const fetchSpreadsheetData = async () => {
     });
     
     if (!stockRes.ok) {
+      if (stockRes.status === 401) {
+        clearStoredAuth();
+        dispatch({ type: 'LOGOUT' });
+        dispatch({ type: 'SET_ERROR', error: 'Your Google session has expired. Please sign in again.' });
+        return;
+      }
       if (stockRes.status === 400) {
         const errorData = await stockRes.json();
         if (errorData.error && errorData.error.message.includes('Unable to parse range')) {
@@ -1000,17 +1043,26 @@ const renderActiveView = (state) => {
             </div>
             
             <div class="input-group">
-              <label class="input-label ${state.activeOcrField === 'domain' ? 'ocr-target-active' : ''}">Domain / Estate</label>
+              <div class="ocr-input-heading">
+                <label class="input-label ${state.activeOcrField === 'domain' ? 'ocr-target-active' : ''}">Domain / Estate</label>
+                <button class="ocr-clear-field-btn" data-field="domain" type="button">Clear</button>
+              </div>
               <input type="text" id="input-domain" class="${state.activeOcrField === 'domain' ? 'ocr-target-active' : ''}" value="${state.formData.domain}" placeholder="e.g. Domaine de la Romanée-Conti">
             </div>
             
             <div class="input-group">
-              <label class="input-label ${state.activeOcrField === 'appellation' ? 'ocr-target-active' : ''}">Appellation</label>
+              <div class="ocr-input-heading">
+                <label class="input-label ${state.activeOcrField === 'appellation' ? 'ocr-target-active' : ''}">Appellation</label>
+                <button class="ocr-clear-field-btn" data-field="appellation" type="button">Clear</button>
+              </div>
               <input type="text" id="input-appellation" class="${state.activeOcrField === 'appellation' ? 'ocr-target-active' : ''}" value="${state.formData.appellation}" placeholder="e.g. Vosne-Romanée">
             </div>
             
             <div class="input-group">
-              <label class="input-label ${state.activeOcrField === 'vintage' ? 'ocr-target-active' : ''}">Vintage</label>
+              <div class="ocr-input-heading">
+                <label class="input-label ${state.activeOcrField === 'vintage' ? 'ocr-target-active' : ''}">Vintage</label>
+                <button class="ocr-clear-field-btn" data-field="vintage" type="button">Clear</button>
+              </div>
               <input type="text" id="input-vintage" class="${state.activeOcrField === 'vintage' ? 'ocr-target-active' : ''}" value="${state.formData.vintage}" placeholder="e.g. 2015">
             </div>
             
@@ -1092,7 +1144,10 @@ const bindEventListeners = (state) => {
   if (navDashboard) navDashboard.addEventListener('click', () => dispatch({ type: 'SET_VIEW', view: 'DASHBOARD' }));
   
   const navLogout = document.getElementById('nav-logout-btn');
-  if (navLogout) navLogout.addEventListener('click', () => dispatch({ type: 'LOGOUT' }));
+  if (navLogout) navLogout.addEventListener('click', () => {
+    clearStoredAuth();
+    dispatch({ type: 'LOGOUT' });
+  });
 
   // Error/Success Dismissal
   const dismissError = document.getElementById('dismiss-error-btn');
@@ -1229,22 +1284,27 @@ const bindEventListeners = (state) => {
       const inputAppellation = document.getElementById('input-appellation');
       const inputVintage = document.getElementById('input-vintage');
       
-      // Updating state re-renders this form. Restore the input and caret afterwards so
-      // backspace, mid-string edits, and mobile keyboard entry feel uninterrupted.
-      const updateOcrTextField = (event, field, inputId) => {
-        const { value, selectionStart, selectionEnd } = event.target;
-        dispatch({ type: 'SET_FORM_DATA', data: { [field]: value } });
-
-        const replacementInput = document.getElementById(inputId);
-        if (replacementInput) {
-          replacementInput.focus();
-          replacementInput.setSelectionRange(selectionStart, selectionEnd);
-        }
+      // Do not re-render while typing. Replacing a focused input closes the keyboard
+      // on iOS Safari, even when focus is immediately restored. The native input
+      // already displays the new value; update only application state until another
+      // user action naturally re-renders this view.
+      const updateOcrTextField = (event, field) => {
+        currentState = stateReducer(currentState, {
+          type: 'SET_FORM_DATA',
+          data: { [field]: event.target.value }
+        });
       };
 
-      if (inputDomain) inputDomain.addEventListener('input', (e) => updateOcrTextField(e, 'domain', 'input-domain'));
-      if (inputAppellation) inputAppellation.addEventListener('input', (e) => updateOcrTextField(e, 'appellation', 'input-appellation'));
-      if (inputVintage) inputVintage.addEventListener('input', (e) => updateOcrTextField(e, 'vintage', 'input-vintage'));
+      if (inputDomain) inputDomain.addEventListener('input', (e) => updateOcrTextField(e, 'domain'));
+      if (inputAppellation) inputAppellation.addEventListener('input', (e) => updateOcrTextField(e, 'appellation'));
+      if (inputVintage) inputVintage.addEventListener('input', (e) => updateOcrTextField(e, 'vintage'));
+
+      const clearFieldButtons = document.querySelectorAll('.ocr-clear-field-btn');
+      clearFieldButtons.forEach(btn => {
+        btn.addEventListener('click', () => {
+          dispatch({ type: 'SET_FORM_DATA', data: { [btn.dataset.field]: '' } });
+        });
+      });
       
       const retakeBtn = document.getElementById('ocr-retake-btn');
       if (retakeBtn) {
@@ -1437,4 +1497,12 @@ document.addEventListener('DOMContentLoaded', () => {
   
   // Initial render loop kick-off
   render(currentState);
+
+  // Reuse a still-valid Google token after page reloads. Google access tokens expire,
+  // so expired entries are discarded and the normal login button remains available.
+  const storedAuth = getStoredAuth();
+  if (storedAuth) {
+    dispatch({ type: 'SET_ACCESS_TOKEN', token: storedAuth.token, expiresAt: storedAuth.expiresAt });
+    fetchSpreadsheetData();
+  }
 });

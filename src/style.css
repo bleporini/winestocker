@@ -143,6 +143,35 @@ p {
   font-weight: 500;
 }
 
+.ocr-input-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ocr-input-heading .input-label {
+  margin-bottom: 6px;
+}
+
+.ocr-clear-field-btn {
+  appearance: none;
+  border: 0;
+  padding: 2px 0 6px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-family: var(--font-sans);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.ocr-clear-field-btn:active {
+  color: var(--color-accent-gold);
+}
+
 input[type="text"],
 input[type="number"],
 input[type="password"] {
