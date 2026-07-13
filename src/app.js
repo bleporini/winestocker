@@ -23,6 +23,7 @@ const createInitialState = () => Object.freeze({
   view: 'LOGIN', // 'LOGIN' | 'DASHBOARD' | 'SCANNER' | 'OCR' | 'CONFIRM'
   scanMode: 'IN', // 'IN' | 'OUT'
   scannedBarcode: '',
+  selectedStockId: '', // Existing stock row selected directly from the dashboard
   activeOcrField: 'domain', // 'domain' | 'appellation' | 'vintage'
   ocrResult: Object.freeze({
     imageUrl: null,
@@ -105,6 +106,7 @@ const stateReducer = (state, action) => {
         ...state,
         view: 'OCR',
         scannedBarcode: '',
+        selectedStockId: '',
         ocrResult: Object.freeze({
           imageUrl: null,
           imageWidth: 0,
@@ -122,7 +124,18 @@ const stateReducer = (state, action) => {
     case 'BARCODE_SCANNED':
       return Object.freeze({
         ...state,
-        scannedBarcode: action.barcode
+        scannedBarcode: action.barcode,
+        selectedStockId: ''
+      });
+
+    case 'SELECT_EXISTING_WINE':
+      return Object.freeze({
+        ...state,
+        view: 'CONFIRM',
+        scanMode: 'OUT',
+        scannedBarcode: '',
+        selectedStockId: action.item.id,
+        formData: Object.freeze(action.formData)
       });
       
     case 'SET_ACTIVE_OCR_FIELD':
@@ -663,7 +676,7 @@ const runTesseractOcr = async (source) => {
  */
 const commitTransaction = async () => {
   const { accessToken, spreadsheetId } = currentState.auth;
-  const { scannedBarcode, scanMode, formData, bottleCache, inventory } = currentState;
+  const { scannedBarcode, selectedStockId, scanMode, formData, bottleCache, inventory } = currentState;
   
   if (!accessToken || !spreadsheetId) return;
   
@@ -673,7 +686,7 @@ const commitTransaction = async () => {
   const quantityScanned = formData.quantity;
   const wineName = `${formData.domain} ${formData.appellation}`.trim();
   const vintage = formData.vintage;
-  const barcode = scannedBarcode || `MANUAL-${Date.now()}`;
+  const barcode = selectedStockId || scannedBarcode || `MANUAL-${Date.now()}`;
   
   try {
     // 1. Ledger Entry: Append Event to events sheet
@@ -694,7 +707,7 @@ const commitTransaction = async () => {
     
     // 2. Cache Entry: If we scanned barcode and it wasn't in cache, append to bottle_cache
     const isBarcodeCached = bottleCache.some(b => b.barcode === barcode);
-    if (scannedBarcode && !isBarcodeCached) {
+    if (scannedBarcode && !selectedStockId && !isBarcodeCached) {
       const cacheRow = [barcode, formData.domain, formData.appellation, vintage];
       await fetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/bottle_cache!A:D:append?valueInputOption=USER_ENTERED`,
@@ -883,7 +896,12 @@ const renderActiveView = (state) => {
                   <div class="wine-title">${item.wine_name || 'Unknown Wine'}</div>
                   <div class="wine-vintage">${item.vintage ? `${item.vintage} Vintage` : 'NV'}</div>
                 </div>
-                <div class="wine-qty">${item.quantity}</div>
+                <div class="inventory-actions">
+                  <div class="wine-qty">${item.quantity}</div>
+                  ${(parseInt(item.quantity) || 0) > 0 ? `
+                    <button class="stock-out-item-btn" data-stock-id="${item.id}" type="button">Stock Out</button>
+                  ` : ''}
+                </div>
               </div>
             `).join('') : `
               <div style="text-align: center; padding: 40px 0; color: var(--color-text-secondary); font-size: 0.95rem;">
@@ -1123,6 +1141,26 @@ const bindEventListeners = (state) => {
           // Allow click handlers to resolve before losing keyboard focus
         });
       }
+
+      const stockOutButtons = document.querySelectorAll('.stock-out-item-btn');
+      stockOutButtons.forEach(btn => {
+        btn.addEventListener('click', () => {
+          const item = state.inventory.find(stockItem => stockItem.id === btn.dataset.stockId);
+          if (!item) return;
+
+          const cachedBottle = state.bottleCache.find(bottle => bottle.barcode === item.id);
+          dispatch({
+            type: 'SELECT_EXISTING_WINE',
+            item,
+            formData: {
+              domain: cachedBottle?.domain || '',
+              appellation: cachedBottle?.appellation || item.wine_name || '',
+              vintage: cachedBottle?.vintage || item.vintage || '',
+              quantity: 1
+            }
+          });
+        });
+      });
       break;
     }
       
@@ -1191,9 +1229,22 @@ const bindEventListeners = (state) => {
       const inputAppellation = document.getElementById('input-appellation');
       const inputVintage = document.getElementById('input-vintage');
       
-      if (inputDomain) inputDomain.addEventListener('input', (e) => dispatch({ type: 'SET_FORM_DATA', data: { domain: e.target.value } }));
-      if (inputAppellation) inputAppellation.addEventListener('input', (e) => dispatch({ type: 'SET_FORM_DATA', data: { appellation: e.target.value } }));
-      if (inputVintage) inputVintage.addEventListener('input', (e) => dispatch({ type: 'SET_FORM_DATA', data: { vintage: e.target.value } }));
+      // Updating state re-renders this form. Restore the input and caret afterwards so
+      // backspace, mid-string edits, and mobile keyboard entry feel uninterrupted.
+      const updateOcrTextField = (event, field, inputId) => {
+        const { value, selectionStart, selectionEnd } = event.target;
+        dispatch({ type: 'SET_FORM_DATA', data: { [field]: value } });
+
+        const replacementInput = document.getElementById(inputId);
+        if (replacementInput) {
+          replacementInput.focus();
+          replacementInput.setSelectionRange(selectionStart, selectionEnd);
+        }
+      };
+
+      if (inputDomain) inputDomain.addEventListener('input', (e) => updateOcrTextField(e, 'domain', 'input-domain'));
+      if (inputAppellation) inputAppellation.addEventListener('input', (e) => updateOcrTextField(e, 'appellation', 'input-appellation'));
+      if (inputVintage) inputVintage.addEventListener('input', (e) => updateOcrTextField(e, 'vintage', 'input-vintage'));
       
       const retakeBtn = document.getElementById('ocr-retake-btn');
       if (retakeBtn) {
